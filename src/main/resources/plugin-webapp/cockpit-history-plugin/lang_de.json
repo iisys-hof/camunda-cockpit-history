@@ -1,0 +1,6 @@
+{
+	"startEvent":"Startereignis",
+	"serviceTask":"Dienstaufgabe",
+	"userTask":"Benutzeraufgabe",
+	"noneEndEvent":"Endereignis"
+}

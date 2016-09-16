@@ -1,0 +1,583 @@
+<script type="text/javascript">
+  //<![CDATA[
+  	// URL configuration
+    var CAMUNDA_URL = '/camunda/';
+    var CAMUNDA_REST_URL = '/engine-rest/';
+    var LANG_BASE_URL = CAMUNDA_URL + '/api/cockpit/plugin/cockpit-history-plugin/static/';
+    var PROCESS_BASE_URL = 'http://127.0.0.1:8080';
+    var PROFILE_URL = 'http://127.0.0.1:8080/web/guest/profile?userId=';
+
+    var DEF_LANG = 'en';
+
+    // temporarily stored workflow definitions, active workflows and tasks
+    var fSelProcId = null;
+
+    var fHistory = null;
+    var fHistoryMap = null;
+    var fHistoryProcIds = null;
+    var fHistoryProcNames = null;
+    var fHistoryUserNames = null;
+    var fFirstResult = 0;
+    var fMaxResults = 20;
+
+    var fActTypeLang = new Object();
+    var fLangFallback = false;
+
+    var fDetails = null;
+
+    /*
+     *  Sends an HTTP request with the given method (GET, POST, ...) to the
+     *  given URL, executing the given callback on receiving a response.
+     *  If a payload object is given, it will be sent as JSON.
+     *  In case of an error the "error" property is set on the response,
+     *  containing a message.
+     */
+    function sendRequest(method, url, callback, payload)
+    {
+      var xhr = new XMLHttpRequest();
+
+      xhr.open(method, url, true);
+      //xhr.responseType = 'json';
+
+      xhr.onreadystatechange = function()
+      {
+        if(xhr.readyState == 4)
+        {
+          if(xhr.status == 200)
+          {
+            callback(JSON.parse(xhr.response));
+          }
+          else
+          {
+            console.log('Camunda tab:\n'
+            + 'Error ' + xhr.status + ': ' + xhr.statusText);
+
+            var message = new Object();
+            message.error = 'Error ' + xhr.status + ': ' + xhr.statusText;
+            callback(message);
+          }
+        }
+      }
+
+      if(payload)
+      {
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.send(JSON.stringify(payload));
+      }
+      else
+      {
+        xhr.send();
+      }
+    }
+
+    // reads the definition ID from the URL fragment
+    function getDefinitionId()
+    {
+    	var defId = window.location.hash;
+
+    	defId = defId.replace('#/process-definition/', '');
+		defId = defId.split('/')[0];
+    	
+    	return defId; 
+    }
+
+ 	// retrieves the workflow history for the document
+    function showHistory()
+    {
+      var url = CAMUNDA_REST_URL + 'process-history';
+
+      //pagination
+      url += '?firstResult=' + fFirstResult + '&maxResults=' + fMaxResults;
+
+      //url parameters
+	  url += '&finished=true';
+      url += '&sortBy=startTime&sortOrder=desc';
+
+	  url += '&processDefinitionId=' + getDefinitionId();
+      
+      // TODO: add process definition ID
+
+      sendRequest('GET', url, historyDisplay, null);
+    }
+
+    // displays the document history in the given response in "camundaIframe"
+    function historyDisplay(response)
+    {
+      fHistory = response;
+      fHistoryMap = new Object();
+
+      var html = '<table class="process-instances cam-table ng-scope">';
+
+	  // table head
+	  html += '<thead><tr>';
+	  html += '<th class="instance-id uuid">ID</th>';
+   	  html += '<th class="start-time">Start Time</th>';
+   	  html += '<th class="start-time">End Time</th>';
+   	  html += '<th class="start-time">Duration</th>';
+	  html += '</tr></thead>';
+
+	  // data
+	  html += '<tbody>';
+		
+      fHistory.forEach(function(entry)
+      {
+		fHistoryMap[entry.id] = entry;
+          
+        //TODO: missing names handling
+
+        //TODO: additional details / ID?
+        html += displayHistoryEntry(entry);
+      });
+      
+	  html += '</tbody>';
+
+      html += '</table>';
+
+      //pagination buttons
+      html += '<button type="button" onclick="historyBack()"> back </button>';
+      html += '<button type="button" onclick="historyForward()"> more </button>';
+
+      document.getElementById('optionsHolder').innerHTML = html;
+    }
+
+    function displayHistoryEntry(entry)
+    {
+		html = '<tr ng-repeat="processInstance in processInstances" class="ng-scope">';
+
+		// uuid with details link
+		html += '<td class="instance-id uuid">';
+		html += '<a onclick="showDetails(\'' + entry.id + '\')" style="cursor: pointer;">' + entry.id + '</a>';
+		html += '</td>';
+
+		// start time
+		html += '<td class="start-time ng-binding">';
+	    html += entry.startTime;
+	    html += '</td>';
+
+		// end time
+		html += '<td class="start-time ng-binding">';
+		if(entry.endTime != null)
+        {
+          html += entry.endTime;
+        }
+	    html += '</td>';
+
+		// duration
+		html += '<td class="start-time ng-binding">';
+		if(entry.durationInMillis != null)
+        {
+          html += displayTime(entry.durationInMillis);
+        }
+	    html += '</td>';
+		
+		// end row
+		html += '</tr>';
+        
+        // old display
+        /*
+    	html = '<div class="historyEntry">';
+        html += displayTimestamp(entry.startTime) + ' - ';
+
+        // TODO: link to details view if possible
+        html += '<a onclick="showDetails(\'' + entry.id + '\')">' + entry.id + '</a> - ';
+        
+        html += displayUser(entry.startUserId, entry.startUserName) + ' - ';
+        html += displayProcessDef(entry.processDefinitionId, entry.processDefinitionName) + ' - ';
+
+        if(entry.endTime != null)
+        {
+          html += 'end: ' + displayTimestamp(entry.endTime);
+          html += ' (' + displayTime(entry.durationInMillis) + ')';
+        }
+        else
+        {
+          html += 'running';
+        }
+
+        html += '</div>';
+        */
+
+        return html;
+    }
+
+    // renders a timestamp into the format "HH:MM:SS - DD-M-YYYY"
+    function displayTimestamp(timestamp)
+    {
+      var display = '';
+
+      if(timestamp != null)
+      {
+        var parts = timestamp.split('T');
+        var date = parts[0];
+        var dateParts = date.split('-');
+        var time = parts[1];
+
+        display = dateParts[2] + '/' + dateParts[1] + '/' + dateParts[0];
+        display += ' - ' + time;
+      }
+      else
+      {
+        display = 'n/a';
+      }
+
+      return display;
+    }
+
+    // renders a given time in milliseconds into the format "<n>y <n>d <n>h <n>m <n>s"
+    function displayTime(time)
+    {
+      var display = '';
+
+      var years = Math.floor(time / (365 * 24 * 3600000));
+      var days = Math.floor((time % (365 * 24 * 3600000)) / (24 * 3600000));
+      var hours = Math.floor((time % (24 * 3600000)) / (3600000));
+      var minutes = Math.floor((time % (3600000)) / (60000));
+      var seconds = Math.ceil((time % (60000)) / (1000));
+
+      if(years >= 1)
+      {
+        display += years + 'y ';
+      }
+      if(days >= 1)
+      {
+        display += days + 'd ';
+      }
+      if(hours >= 1)
+      {
+        display += hours + 'h ';
+      }
+      if(minutes >= 1)
+      {
+        display += minutes + 'min ';
+      }
+      if(seconds >= 1)
+      {
+        display += seconds + 's';
+      }
+
+      return display;
+    }
+
+    /*
+     *  creates an HTML display string for the given process defintion ID and available name
+     *  if a name is missing, i.e. null, it's replaced with a placeholder
+     *  a link to the definition in the Camunda cockpit is generated automatically
+     */
+    function displayProcessDef(defId, name)
+    {
+      if(name == null)
+      {
+        name = '(definition deleted)';
+      }
+
+      var display = '<a href="' + CAMUNDA_URL + 'app/cockpit/default/#/process-definition/'
+      	+ defId + '/runtime" target="_blank">';
+      display += name;
+      display += '</a>';
+
+      return display;
+    }
+
+    // creates an HTML display for a user, using his/her name and creating a profile link
+    function displayUser(userId, name)
+    {
+      var display = '<a href="' + PROFILE_URL + userId + '" target="_blank">';
+      display += name;
+      display += '</a>';
+
+      return display;
+    }
+
+    // history pagination "back" function
+    function historyBack()
+    {
+      if(fFirstResult == 0)
+      {
+        return;
+      }
+
+      fFirstResult -= fMaxResults;
+
+      if(fFirstResult < 0)
+      {
+        fFirstResult = 0;
+      }
+
+      showHistory();
+    }
+
+	// history pagination "forwards" function
+	function historyForward()
+	{
+	  fFirstResult += fMaxResults;
+	
+	  showHistory();
+	}
+
+
+	// details of a process instance - tasks
+	function showDetails(procId)
+	{
+		// note ID for displaying process along tasks
+		fSelProcId = procId;
+
+		// determine language, remove specific country if any
+		var language = navigator.language;
+		if(language.includes('-'))
+		{
+			language = language.split('-')[0];
+		}
+		
+		// request language file first
+		var langUrl = LANG_BASE_URL + 'lang_' + language + '.json';
+		
+		sendRequest('GET', langUrl, storeLang, null);
+	}
+
+	function storeLang(response)
+	{
+		var success = false;
+		
+		if(!response.error)
+		{
+			// success
+			fActTypeLang = response;
+			success = true;
+		}
+		else
+		{
+			// failure
+			// fall back to default if that hasn't been tried already
+			if(!fLangFallback)
+			{
+				fLangFallback = true;
+
+				var langUrl = LANG_BASE_URL + 'lang_' + DEF_LANG + '.json';
+				sendRequest('GET', langUrl, storeLang, null);
+			}
+			else
+			{
+				// continue without language file
+				success = true;
+			}
+		}
+
+		if(success)
+		{
+			// request actual task history
+			var url = CAMUNDA_REST_URL + 'history/activity-instance';
+
+			url += '?processInstanceId=' + fSelProcId;
+		    url += '&sortBy=startTime&sortOrder=asc';
+
+			sendRequest('GET', url, detailDisplay, null);
+		}
+	}
+
+	
+	function detailDisplay(response)
+	{
+		fDetails = response;
+
+		// process details
+		var html = '';
+		
+		var process = fHistoryMap[fSelProcId];
+		if(process)
+		{
+			html += '<table class="process-instances cam-table ng-scope">';
+
+			// table head
+			html += '<thead><tr>';
+			html += '<th class="instance-id uuid">Process ID</th>';
+		   	html += '<th class="start-time">Start Time</th>';
+		   	html += '<th class="start-time">End Time</th>';
+		   	html += '<th class="start-time">Duration</th>';
+			html += '</tr></thead>';
+
+		    // data
+		    html += '<tbody>';
+		    
+			html += displayHistoryEntry(process);
+
+		    html += '</tbody></table>';
+		}
+
+		// reorder tasks
+		reorderTasks();
+		
+		// display tasks
+    	html += '<table class="process-instances cam-table ng-scope">';
+
+	    // table head
+	    html += '<thead><tr>';
+	    html += '<th class="instance-id uuid">Task</th>';
+	    html += '<th class="instance-id uuid">Type</th>';
+	    html += '<th class="instance-id uuid">Assignee</th>';
+   	    html += '<th class="start-time">Start Time</th>';
+   	    html += '<th class="start-time">End Time</th>';
+   	    html += '<th class="start-time">Duration</th>';
+	    html += '</tr></thead>';
+
+	 	// data
+		html += '<tbody>';
+	    
+    	fDetails.forEach(function(entry)
+    	{
+		    html += displayActivityEntry(entry);
+		});
+
+		html += '<tbody>';
+
+		// end table
+		html += '</table>';
+	
+	    // back button
+	    html += '<button type="button" onclick="showHistory()"> back </button>';
+	
+	    document.getElementById('optionsHolder').innerHTML = html;
+	}
+
+	function reorderTasks()
+	{
+		// sort so that start and end events are always in first and last position
+		var newTasks = new Array();
+
+		var start = null;
+		var end = null;
+		var others = new Array();
+
+		// disassemble
+		fDetails.forEach(function(entry)
+		{
+			if(entry.activityType == 'startEvent')
+			{
+				start = entry;
+			}
+			else if(entry.activityType == 'noneEndEvent')
+			{
+				end = entry;
+			}
+			else
+			{
+				others.push(entry);
+			}
+		});
+
+		// reassemble
+		if(start != null)
+		{
+			newTasks.push(start);
+		}
+
+		others.forEach(function(entry)
+		{
+			newTasks.push(entry);
+		});
+
+		if(end != null)
+		{
+			newTasks.push(end);
+		}
+
+		// replace global list
+		fDetails = newTasks; 	
+	}
+
+	function displayActivityEntry(entry)
+	{
+		html = '<tr ng-repeat="processInstance in processInstances" class="ng-scope">';
+
+		// Task name
+		html += '<td class="instance-id uuid">';
+		html += entry.activityName;
+		html += '</td>';
+
+		// Task type
+		html += '<td class="instance-id uuid">';
+
+		// get translation
+		var typeString = entry.activityType;
+		if(fActTypeLang[typeString])
+		{
+			typeString = fActTypeLang[typeString];
+		}
+		
+		html += typeString;
+		html += '</td>';
+		
+		// assignee
+		html += '<td class="instance-id uuid">';
+		if(entry.assignee)
+		{
+			// user display name not available anymore with new function
+		    html += displayUser(entry.assignee, entry.assignee);
+		}
+		html += '</td>';
+		
+		// start time
+		html += '<td class="start-time ng-binding">';
+	    html += entry.startTime;
+	    html += '</td>';
+
+		// end time
+		html += '<td class="start-time ng-binding">';
+		if(entry.endTime != null)
+        {
+          html += entry.endTime;
+        }
+	    html += '</td>';
+
+		// duration
+		html += '<td class="start-time ng-binding">';
+		if(entry.durationInMillis != null)
+        {
+          html += displayTime(entry.durationInMillis);
+        }
+	    html += '</td>';
+		
+		// end row
+		html += '</tr>';
+
+		/*
+		html += '<div class="historyEntry">';
+	    html += displayTimestamp(entry.startTime) + ' - ';
+
+	    html += entry.activityName + ' - ';
+
+	    if(entry.owner)
+		{
+		    html += 'owner: ' + displayUser(entry.startUserId, entry.owner) + ' - ';
+		}
+		if(entry.assignee)
+		{
+		    html += 'assignee: ' + displayUser(entry.startUserId, entry.assignee) + ' - ';
+		}
+	
+	    if(entry.endTime != null)
+	    {
+	      html += 'end: ' + displayTimestamp(entry.endTime);
+	      html += ' (' + displayTime(entry.durationInMillis) + ')';
+	    }
+	    else
+	    {
+	        html += 'running';
+	    }
+	
+	    html += '</div>';
+		*/
+
+		return html;
+	}
+  //]]>
+</script>
+
+<div id="camundaControls">
+  <div id="optionsHolder"></div>
+</div>
+
+ <script type="text/javascript">
+  //<![CDATA[
+    showHistory();
+  //]]>
+ </script>

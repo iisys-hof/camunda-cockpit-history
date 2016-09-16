@@ -1,0 +1,6 @@
+{
+	"startEvent":"start event",
+	"serviceTask":"service task",
+	"userTask":"user task",
+	"noneEndEvent":"end event"
+}
